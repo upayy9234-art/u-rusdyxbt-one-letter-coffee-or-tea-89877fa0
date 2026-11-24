@@ -42,9 +42,15 @@ tea") are real, but the drink itself is earnest where coffee is alive.
 The program is fully deterministic: no randomness, no clock, no network,
 no input, no environment read except the output directory. Pure Python
 standard library only.
+
+Run `python3 main.py --self-test` to verify the assessment without
+writing anything: it rebuilds the table twice, candidates in opposite
+orders, and requires the winner, every score and every total to be
+identical in both runs.
 """
 
 import os
+import sys
 
 # Weights follow the judge's brief: vivid first, then funny, then true,
 # then how well the letter stands on its own as a whole answer.
@@ -232,6 +238,69 @@ def verify_order_independence(drinks):
     return forward
 
 
+def self_test():
+    """Run the whole assessment twice, candidates in opposite order,
+    and require identical results — a dry run that writes nothing.
+
+    The normal run already checks order independence inline before
+    writing, but that check runs once and its result is only visible
+    as the absence of an assertion failure. This mode makes the check
+    explicit and repeatable: it rebuilds the table from scratch in
+    both orders, re-validates it, and compares winner, every drink's
+    per-criterion scores, and every weighted total across the two
+    runs. It also guards the entry's decision itself: the winner must
+    still be A for coffee, so a future edit that accidentally flips
+    the pick fails loudly here instead of silently shipping a B.
+    Nothing is written to disk; the output directory is never read.
+    Returns 0 on success, raises AssertionError on any mismatch.
+    """
+    results = []
+    for order in ("listed", "reversed"):
+        drinks = build_drinks()
+        if order == "reversed":
+            drinks = list(reversed(drinks))
+        validate(drinks)
+        winner = verify_order_independence(drinks)
+        results.append(
+            (
+                order,
+                winner.letter,
+                winner.drink,
+                {
+                    d.letter: (
+                        d.vivid,
+                        d.funny,
+                        d.true,
+                        d.stands,
+                        d.total(),
+                    )
+                    for d in drinks
+                },
+            )
+        )
+
+    listed, reversed_ = results
+    assert listed[1:] == reversed_[1:], (
+        "assessment depends on candidate order:\n"
+        "  listed:   %r\n  reversed: %r" % (listed[1:], reversed_[1:])
+    )
+    assert listed[1] == LETTER_COFFEE and listed[2] == "coffee", (
+        "self-test expects A for coffee to win, got %s for %s"
+        % (listed[1], listed[2])
+    )
+    print(
+        "self-test passed: winner %s for %s (total %d vs %d), "
+        "identical in both candidate orders, nothing written"
+        % (
+            listed[1],
+            listed[2],
+            listed[3][LETTER_COFFEE][4],
+            listed[3][LETTER_TEA][4],
+        )
+    )
+    return 0
+
+
 def validate(drinks):
     """Sanity checks on the table itself, before anything is written."""
     letters = [d.letter for d in drinks]
@@ -277,7 +346,21 @@ def write_entry(letter, output_dir):
     return entry_path
 
 
-def main():
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args == ["--self-test"]:
+        return self_test()
+    if args:
+        print(
+            "usage: main.py [--self-test]\n"
+            "  no arguments: score both drinks and write the winner "
+            "to $MAKEFUN_OUTPUT_DIR/entry.txt\n"
+            "  --self-test:  verify the assessment is identical in "
+            "both candidate orders; writes nothing",
+            file=sys.stderr,
+        )
+        return 2
+
     drinks = build_drinks()
     validate(drinks)
 
@@ -299,4 +382,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
